@@ -29,35 +29,25 @@ func yellow(s string) string {
 	return "%F{yellow}" + s + "%f"
 }
 
-func main() {
-	var repository *git.Repository
-	for {
-		wd, err := os.Getwd()
-		if wd == "/" {
-			os.Exit(0)
-		}
-		repository, err = git.OpenRepository(wd)
-		if err != nil {
-			if git.IsErrorCode(err, git.ErrNotFound) {
-				err = os.Chdir(path.Join(wd, ".."))
-				if err != nil {
-					panic(err)
-				}
-			} else {
-				panic(err)
-			}
-		} else {
-			break
-		}
-	}
+func magenta(s string) string {
+	return "%F{magenta}" + s + "%f"
+}
+
+type GitPromptError string
+
+func (gpe GitPromptError) Error() string {
+	return string(gpe)
+}
+
+func Branch(repository *git.Repository) ([]string, error) {
 	head, err := repository.Head()
 	if err != nil {
 		if git.IsErrorCode(err, git.ErrUnbornBranch) {
-			fmt.Print(black("git:(") + "no head" + black(")"))
-			os.Exit(0)
+			return []string{"no head"}, GitPromptError("no head")
 		}
 		panic(err)
 	}
+
 	branch_name_string, err := head.Branch().Name()
 	if err != nil {
 		panic(err)
@@ -79,13 +69,13 @@ func main() {
 			panic(err)
 		}
 		if ahead > 0 && behind > 0 {
-			branch_name = append([]string{"m ↔ "}, branch_name...)
+			branch_name = append([]string{"m " + magenta("↔") + fmt.Sprintf(" %d/%d ", ahead, behind)}, branch_name...)
 		} else {
 			if behind > 0 {
-				branch_name = append([]string{"m → "}, branch_name...)
+				branch_name = append([]string{"m " + magenta("→") + fmt.Sprintf(" %d ", behind)}, branch_name...)
 			}
 			if ahead > 0 {
-				branch_name = append([]string{"m ← "}, branch_name...)
+				branch_name = append([]string{"m " + magenta("←") + fmt.Sprintf(" %d ", ahead)}, branch_name...)
 			}
 		}
 	}
@@ -106,7 +96,7 @@ func main() {
 
 		}
 		behind_string := fmt.Sprintf(" %d", behind)
-		ahead_string := fmt.Sprintf("%d", ahead)
+		ahead_string := fmt.Sprintf(" %d", ahead)
 		if behind > 0 && ahead > 0 {
 			branch_name = append(branch_name, behind_string, yellow("⇵"), ahead_string)
 		} else {
@@ -119,6 +109,82 @@ func main() {
 		}
 
 	}
+	return branch_name, nil
+}
+
+type RepoState struct {
+	Untracked,
+	NewFiles,
+	Deletions,
+	DeletionsStaged,
+	Modifications,
+	ModificationsStaged,
+	Renames,
+	RenamesStaged,
+	ConflictsBoth,
+	ConflictsOur,
+	ConflictsTheir int
+}
+
+func (repoState RepoState) Format() []string {
+	result := []string{}
+
+	if repoState.ConflictsBoth > 0 {
+		result = append(result, fmt.Sprintf(" %d", repoState.ConflictsBoth), blue("B"))
+	} else if repoState.ConflictsOur > 0 {
+		result = append(result, fmt.Sprintf(" %d", repoState.ConflictsOur), blue("U"))
+	} else if repoState.ConflictsTheir > 0 {
+		result = append(result, fmt.Sprintf(" %d", repoState.ConflictsTheir), blue("T"))
+	}
+
+	staged := []string{}
+	if repoState.NewFiles > 0 {
+		staged = append(staged, fmt.Sprintf("%d", repoState.NewFiles), green("N"))
+	}
+	if repoState.ModificationsStaged > 0 {
+		staged = append(staged, fmt.Sprintf("%d", repoState.ModificationsStaged), green("M"))
+	}
+	if repoState.RenamesStaged > 0 {
+		staged = append(staged, fmt.Sprintf("%d", repoState.RenamesStaged), green("R"))
+	}
+	if repoState.DeletionsStaged > 0 {
+		staged = append(staged, fmt.Sprintf("%d", repoState.DeletionsStaged), green("D"))
+	}
+	if len(staged) > 0 {
+		result = append(result, " ")
+		result = append(result, staged...)
+	}
+
+	unstaged := []string{}
+	if repoState.Modifications > 0 {
+		unstaged = append(unstaged, fmt.Sprintf("%d", repoState.Modifications), red("M"))
+	}
+	if repoState.Renames > 0 {
+		unstaged = append(unstaged, fmt.Sprintf("%d", repoState.Renames), red("R"))
+	}
+	if repoState.Deletions > 0 {
+		unstaged = append(unstaged, fmt.Sprintf("%d", repoState.Deletions), red("D"))
+	}
+	if len(unstaged) > 0 {
+		result = append(result, " ")
+		result = append(result, unstaged...)
+	}
+
+	rest := []string{}
+	if repoState.Untracked > 0 {
+		rest = append(rest, fmt.Sprintf("%d", repoState.Untracked), blue("U"))
+	}
+	if len(rest) > 0 {
+		result = append(result, " ")
+		result = append(result, rest...)
+	}
+
+	return result
+}
+
+func Status(repository *git.Repository) RepoState {
+	repoState := RepoState{}
+
 	opts := &git.StatusOptions{}
 	opts.Show = git.StatusShowIndexAndWorkdir
 	opts.Flags = git.StatusOptIncludeUntracked
@@ -131,102 +197,77 @@ func main() {
 		panic(err)
 	}
 
-	untracked := 0
-	new_file := 0
-	deletion := 0
-	deletion_staged := 0
-	modification := 0
-	modification_staged := 0
-	rename := 0
-	rename_staged := 0
-	conflict_both := 0
-	conflict_our := 0
-	conflict_their := 0
 	for i := 0; i < size; i++ {
 		status, err := statusList.ByIndex(i)
 		if err != nil {
 			panic(err)
 		}
-		switch status.Status {
-		case git.StatusIndexModified:
-			modification_staged++
-		case git.StatusWtModified:
-			modification++
-		case git.StatusIndexNew:
-			new_file++
-		case git.StatusWtNew:
-			untracked++
-		case git.StatusIndexRenamed:
-			rename_staged++
-		case git.StatusWtRenamed:
-			rename++
-		case git.StatusIndexDeleted:
-			deletion_staged++
-		case git.StatusWtDeleted:
-			deletion++
-		case git.StatusConflicted:
+		if status.Status&git.StatusIndexModified > 0 {
+			repoState.ModificationsStaged++
+		}
+		if status.Status&git.StatusWtModified > 0 {
+			repoState.Modifications++
+		}
+		if status.Status&git.StatusIndexNew > 0 {
+			repoState.NewFiles++
+		}
+		if status.Status&git.StatusWtNew > 0 {
+			repoState.Untracked++
+		}
+		if status.Status&git.StatusIndexRenamed > 0 {
+			repoState.RenamesStaged++
+		}
+		if status.Status&git.StatusWtRenamed > 0 {
+			repoState.Renames++
+		}
+		if status.Status&git.StatusIndexDeleted > 0 {
+			repoState.DeletionsStaged++
+		}
+		if status.Status&git.StatusWtDeleted > 0 {
+			repoState.Deletions++
+		}
+		if status.Status&git.StatusConflicted > 0 {
 			if status.HeadToIndex.Status > 0 && status.IndexToWorkdir.Status > 0 {
-				conflict_both++
+				repoState.ConflictsBoth++
 			} else if status.HeadToIndex.Status > 0 {
-				conflict_their++
+				repoState.ConflictsTheir++
 			} else if status.IndexToWorkdir.Status > 0 {
-				conflict_our++
+				repoState.ConflictsOur++
 			}
-		default:
-			fmt.Println(status)
 		}
 	}
 
+	return repoState
+}
+
+func main() {
+	var repository *git.Repository
+	for {
+		wd, err := os.Getwd()
+		if wd == "/" {
+			os.Exit(0)
+		}
+		repository, err = git.OpenRepository(wd)
+		if err != nil {
+			if git.IsErrorCode(err, git.ErrNotFound) {
+				err = os.Chdir(path.Join(wd, ".."))
+				if err != nil {
+					panic(err)
+				}
+			} else {
+				panic(err)
+			}
+		} else {
+			break
+		}
+	}
+	branch_name, err := Branch(repository)
+
 	result := append([]string{black("git:(")}, branch_name...)
 	result = append(result, black(")"))
-
-	if conflict_both > 0 {
-		result = append(result, fmt.Sprintf(" %d", conflict_both), blue("B"))
-	} else if conflict_our > 0 {
-		result = append(result, fmt.Sprintf(" %d", conflict_our), blue("U"))
-	} else if conflict_their > 0 {
-		result = append(result, fmt.Sprintf(" %d", conflict_their), blue("T"))
-	}
-
-	staged := []string{}
-	if new_file > 0 {
-		staged = append(staged, fmt.Sprintf("%d", new_file), green("A"))
-	}
-	if modification_staged > 0 {
-		staged = append(staged, fmt.Sprintf("%d", modification_staged), green("M"))
-	}
-	if rename_staged > 0 {
-		staged = append(staged, fmt.Sprintf("%d", rename_staged), green("R"))
-	}
-	if deletion_staged > 0 {
-		staged = append(staged, fmt.Sprintf("%d", deletion_staged), green("D"))
-	}
-	if len(staged) > 0 {
-		result = append(result, staged...)
-	}
-
-	unstaged := []string{}
-	if modification > 0 {
-		unstaged = append(unstaged, fmt.Sprintf("%d", modification), red("M"))
-	}
-	if rename > 0 {
-		unstaged = append(unstaged, fmt.Sprintf("%d", rename), red("R"))
-	}
-	if deletion > 0 {
-		unstaged = append(unstaged, fmt.Sprintf("%d", deletion), red("D"))
-	}
-	if len(unstaged) > 0 {
-		result = append(result, " ")
-		result = append(result, unstaged...)
-	}
-
-	rest := []string{}
-	if untracked > 0 {
-		rest = append(rest, fmt.Sprintf("%d", untracked), blue("A"))
-	}
-	if len(rest) > 0 {
-		result = append(result, []string{" "}...)
-		result = append(result, rest...)
+	if err == nil {
+		state := Status(repository)
+		result = append(result, state.Format()...)
 	}
 	fmt.Print(" " + strings.Join(result, ""))
 }
