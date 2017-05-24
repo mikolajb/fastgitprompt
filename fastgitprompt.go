@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	git "gopkg.in/libgit2/git2go.v24"
+	git "gopkg.in/libgit2/git2go.v25"
 )
 
 func red(s string) string {
@@ -40,6 +40,13 @@ func (gpe GitPromptError) Error() string {
 }
 
 func Branch(repository *git.Repository) ([]string, error) {
+	is_detached, err := repository.IsHeadDetached()
+	if err != nil {
+		panic(err)
+	} else if is_detached {
+		return []string{"head detached"}, GitPromptError("head detached")
+	}
+
 	head, err := repository.Head()
 	if err != nil {
 		if git.IsErrorCode(err, git.ErrUnbornBranch) {
