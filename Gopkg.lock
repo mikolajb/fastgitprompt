@@ -5,7 +5,7 @@
   branch = "v26"
   name = "gopkg.in/libgit2/git2go.v26"
   packages = ["."]
-  revision = "e0c6962c02edc787dce75b075fd7981a5fd4c8b6"
+  revision = "e424134bb6a425a508cf037ed62218c6b21600ce"
   source = "https://github.com/mikolajb/git2go"
 
 [solve-meta]
