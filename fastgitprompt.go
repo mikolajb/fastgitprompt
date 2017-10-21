@@ -40,10 +40,10 @@ func (gpe GitPromptError) Error() string {
 }
 
 func Branch(repository *git.Repository) ([]string, error) {
-	is_detached, err := repository.IsHeadDetached()
+	isDetached, err := repository.IsHeadDetached()
 	if err != nil {
 		panic(err)
-	} else if is_detached {
+	} else if isDetached {
 		return []string{"head detached"}, GitPromptError("head detached")
 	}
 
@@ -55,34 +55,32 @@ func Branch(repository *git.Repository) ([]string, error) {
 		panic(err)
 	}
 
-	branch_name_string, err := head.Branch().Name()
+	branchNameString, err := head.Branch().Name()
 	if err != nil {
 		panic(err)
 	}
-	branch_name := []string{branch_name_string}
+	branchName := []string{branchNameString}
 
 	masterBranch, err := repository.LookupBranch("master", git.BranchLocal)
-	if err != nil {
-		panic(err)
-	}
-
-	isHead, err := masterBranch.IsHead()
-	if err != nil {
-		panic(err)
-	}
-	if !isHead {
-		ahead, behind, err := repository.AheadBehind(head.Target(), masterBranch.Target())
+	if err == nil {
+		isHead, err := masterBranch.IsHead()
 		if err != nil {
 			panic(err)
 		}
-		if ahead > 0 && behind > 0 {
-			branch_name = append([]string{"m " + magenta("↔") + fmt.Sprintf(" %d/%d ", ahead, behind)}, branch_name...)
-		} else {
-			if behind > 0 {
-				branch_name = append([]string{"m " + magenta("→") + fmt.Sprintf(" %d ", behind)}, branch_name...)
+		if !isHead {
+			ahead, behind, err := repository.AheadBehind(head.Target(), masterBranch.Target())
+			if err != nil {
+				panic(err)
 			}
-			if ahead > 0 {
-				branch_name = append([]string{"m " + magenta("←") + fmt.Sprintf(" %d ", ahead)}, branch_name...)
+			if ahead > 0 && behind > 0 {
+				branchName = append([]string{"m " + magenta("↔") + fmt.Sprintf(" %d/%d ", ahead, behind)}, branchName...)
+			} else {
+				if behind > 0 {
+					branchName = append([]string{"m " + magenta("→") + fmt.Sprintf(" %d ", behind)}, branchName...)
+				}
+				if ahead > 0 {
+					branchName = append([]string{"m " + magenta("←") + fmt.Sprintf(" %d ", ahead)}, branchName...)
+				}
 			}
 		}
 	}
@@ -90,9 +88,9 @@ func Branch(repository *git.Repository) ([]string, error) {
 	upstream, err := head.Branch().Upstream()
 	if err != nil {
 		if git.IsErrorCode(err, git.ErrNotFound) {
-			branch_name = append([]string{" "}, branch_name...)
-			branch_name = append([]string{red("⚡")}, branch_name...)
-			branch_name = append([]string{"upstream "}, branch_name...)
+			branchName = append([]string{" "}, branchName...)
+			branchName = append([]string{red("⚡")}, branchName...)
+			branchName = append([]string{"upstream "}, branchName...)
 		} else {
 			panic(err)
 		}
@@ -102,21 +100,21 @@ func Branch(repository *git.Repository) ([]string, error) {
 			panic(err)
 
 		}
-		behind_string := fmt.Sprintf(" %d", behind)
-		ahead_string := fmt.Sprintf(" %d", ahead)
+		behindString := fmt.Sprintf(" %d", behind)
+		aheadString := fmt.Sprintf(" %d", ahead)
 		if behind > 0 && ahead > 0 {
-			branch_name = append(branch_name, behind_string, yellow("⇵"), ahead_string)
+			branchName = append(branchName, behindString, yellow("⇵"), aheadString)
 		} else {
 			if behind > 0 {
-				branch_name = append(branch_name, behind_string, red("↓"))
+				branchName = append(branchName, behindString, red("↓"))
 			}
 			if ahead > 0 {
-				branch_name = append(branch_name, ahead_string, green("↑"))
+				branchName = append(branchName, aheadString, green("↑"))
 			}
 		}
 
 	}
-	return branch_name, nil
+	return branchName, nil
 }
 
 type RepoState struct {
@@ -268,9 +266,9 @@ func main() {
 			break
 		}
 	}
-	branch_name, err := Branch(repository)
+	branchName, err := Branch(repository)
 
-	result := append([]string{black("git:(")}, branch_name...)
+	result := append([]string{black("git:(")}, branchName...)
 	result = append(result, black(")"))
 	if err == nil {
 		state := Status(repository)
