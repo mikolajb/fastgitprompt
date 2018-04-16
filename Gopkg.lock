@@ -2,15 +2,14 @@
 
 
 [[projects]]
-  branch = "v26"
-  name = "gopkg.in/libgit2/git2go.v26"
+  branch = "v27"
+  name = "gopkg.in/libgit2/git2go.v27"
   packages = ["."]
-  revision = "e424134bb6a425a508cf037ed62218c6b21600ce"
-  source = "https://github.com/mikolajb/git2go"
+  revision = "b479bd14632fd5759d1335387548ce6e66a50f10"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "d2cf5b65c9cb0a964ff27a90122e4d93fe0ef7ed5960793fd55f4e50c9679114"
+  inputs-digest = "13ebccd52de4cb97e609f51a2774c8deb8c4accef3ce187dc72fbe6312cc5a0c"
   solver-name = "gps-cdcl"
   solver-version = 1

@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	git "gopkg.in/libgit2/git2go.v26"
+	git "gopkg.in/libgit2/git2go.v27"
 )
 
 func red(s string) string {
