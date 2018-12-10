@@ -1,4 +1,3 @@
 [[constraint]]
-  branch = "v26"
-  name = "gopkg.in/libgit2/git2go.v26"
-  source = "https://github.com/mikolajb/git2go"
+  name = "gopkg.in/src-d/go-git.v4"
+  source = "https://github.com/src-d/go-git"

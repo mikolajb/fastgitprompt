@@ -2,11 +2,15 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
-	git "gopkg.in/libgit2/git2go.v26"
+	git "gopkg.in/src-d/go-git.v4"
+	"gopkg.in/src-d/go-git.v4/plumbing"
+	"gopkg.in/src-d/go-git.v4/plumbing/object"
 )
 
 func red(s string) string {
@@ -33,232 +37,162 @@ func magenta(s string) string {
 	return "%F{magenta}" + s + "%f"
 }
 
-type GitPromptError string
+func aheadBehind(repository *git.Repository, one, two plumbing.Hash) (ahead, behind int, err error) {
+	oneVisited := make(map[plumbing.Hash]struct {
+		exists bool
+		count  int
+	})
 
-func (gpe GitPromptError) Error() string {
-	return string(gpe)
+	oneCommitIter, err := repository.Log(&git.LogOptions{From: one})
+	if err != nil {
+		return 0, 0, err
+	}
+	oneCommitIter.ForEach(func(c *object.Commit) error {
+		oneVisited[c.Hash] = struct {
+			exists bool
+			count  int
+		}{
+			exists: true,
+			count:  behind,
+		}
+		behind++
+		return nil
+	})
+	twoCommitIter, err := repository.Log(&git.LogOptions{From: two})
+	if err != nil {
+		return
+	}
+	for {
+		var c *object.Commit
+		c, err = twoCommitIter.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return
+		}
+
+		if oneVisited[c.Hash].exists {
+			return ahead, oneVisited[c.Hash].count, nil
+		}
+
+		ahead++
+	}
+	return
 }
 
-func Branch(repository *git.Repository) ([]string, error) {
-	isDetached, err := repository.IsHeadDetached()
-	if err != nil {
-		panic(err)
-	} else if isDetached {
-		return []string{"head detached"}, GitPromptError("head detached")
-	}
-
+func Prompt(repository *git.Repository) (string, error) {
 	head, err := repository.Head()
 	if err != nil {
-		if git.IsErrorCode(err, git.ErrUnbornBranch) {
-			return []string{"no head"}, GitPromptError("no head")
-		}
 		panic(err)
 	}
 
-	branchNameString, err := head.Branch().Name()
-	if err != nil {
-		panic(err)
-	}
-	branchName := []string{branchNameString}
+	branchName := []string{head.Name().Short()}
+	if head.Name() != plumbing.Master {
+		branches := []plumbing.ReferenceName{plumbing.Master, head.Name()}
+		hashes := []plumbing.Hash{}
 
-	masterBranch, err := repository.LookupBranch("master", git.BranchLocal)
-	if err == nil {
-		isHead, err := masterBranch.IsHead()
-		if err != nil {
-			panic(err)
-		}
-		if !isHead {
-			ahead, behind, err := repository.AheadBehind(head.Target(), masterBranch.Target())
+		for _, branch := range branches {
+			ref, err := repository.Reference(branch, true)
 			if err != nil {
 				panic(err)
 			}
-			if ahead > 0 && behind > 0 {
-				branchName = append([]string{"m " + magenta("↔") + fmt.Sprintf(" %d/%d ", ahead, behind)}, branchName...)
-			} else {
-				if behind > 0 {
-					branchName = append([]string{"m " + magenta("→") + fmt.Sprintf(" %d ", behind)}, branchName...)
-				}
-				if ahead > 0 {
-					branchName = append([]string{"m " + magenta("←") + fmt.Sprintf(" %d ", ahead)}, branchName...)
-				}
+			hashes = append(hashes, ref.Hash())
+		}
+		ahead, behind, err := aheadBehind(repository, hashes[0], hashes[1])
+		if err != nil {
+			panic(err)
+		}
+
+		if ahead > 0 || behind > 0 {
+			prefix := ""
+			if behind > 0 {
+				prefix += strconv.Itoa(behind) + magenta("↓")
 			}
+			if ahead > 0 {
+				prefix += magenta("↑") + strconv.Itoa(ahead)
+			}
+			branchName = append([]string{prefix, " "}, branchName...)
 		}
 	}
 
-	upstream, err := head.Branch().Upstream()
+	result := append([]string{black("git:(")}, branchName...)
+	worktree, err := repository.Worktree()
 	if err != nil {
-		if git.IsErrorCode(err, git.ErrNotFound) {
-			branchName = append([]string{" "}, branchName...)
-			branchName = append([]string{red("⚡")}, branchName...)
-			branchName = append([]string{"upstream "}, branchName...)
+		if err == git.ErrIsBareRepository {
+			result = append(result, magenta("#bare"))
 		} else {
 			panic(err)
 		}
 	} else {
-		ahead, behind, err := repository.AheadBehind(head.Target(), upstream.Target())
-		if err != nil {
-			panic(err)
-
-		}
-		behindString := fmt.Sprintf(" %d", behind)
-		aheadString := fmt.Sprintf(" %d", ahead)
-		if behind > 0 && ahead > 0 {
-			branchName = append(branchName, behindString, yellow("⇵"), aheadString)
-		} else {
-			if behind > 0 {
-				branchName = append(branchName, behindString, red("↓"))
-			}
-			if ahead > 0 {
-				branchName = append(branchName, aheadString, green("↑"))
-			}
-		}
-
-	}
-	return branchName, nil
-}
-
-type RepoState struct {
-	Untracked,
-	NewFiles,
-	Deletions,
-	DeletionsStaged,
-	Modifications,
-	ModificationsStaged,
-	Renames,
-	RenamesStaged,
-	ConflictsBoth,
-	ConflictsOur,
-	ConflictsTheir int
-}
-
-func (repoState RepoState) Format() []string {
-	result := []string{}
-
-	if repoState.ConflictsBoth > 0 {
-		result = append(result, fmt.Sprintf(" %d", repoState.ConflictsBoth), blue("B"))
-	} else if repoState.ConflictsOur > 0 {
-		result = append(result, fmt.Sprintf(" %d", repoState.ConflictsOur), blue("U"))
-	} else if repoState.ConflictsTheir > 0 {
-		result = append(result, fmt.Sprintf(" %d", repoState.ConflictsTheir), blue("T"))
-	}
-
-	staged := []string{}
-	if repoState.NewFiles > 0 {
-		staged = append(staged, fmt.Sprintf("%d", repoState.NewFiles), green("N"))
-	}
-	if repoState.ModificationsStaged > 0 {
-		staged = append(staged, fmt.Sprintf("%d", repoState.ModificationsStaged), green("M"))
-	}
-	if repoState.RenamesStaged > 0 {
-		staged = append(staged, fmt.Sprintf("%d", repoState.RenamesStaged), green("R"))
-	}
-	if repoState.DeletionsStaged > 0 {
-		staged = append(staged, fmt.Sprintf("%d", repoState.DeletionsStaged), green("D"))
-	}
-	if len(staged) > 0 {
-		result = append(result, " ")
-		result = append(result, staged...)
-	}
-
-	unstaged := []string{}
-	if repoState.Modifications > 0 {
-		unstaged = append(unstaged, fmt.Sprintf("%d", repoState.Modifications), red("M"))
-	}
-	if repoState.Renames > 0 {
-		unstaged = append(unstaged, fmt.Sprintf("%d", repoState.Renames), red("R"))
-	}
-	if repoState.Deletions > 0 {
-		unstaged = append(unstaged, fmt.Sprintf("%d", repoState.Deletions), red("D"))
-	}
-	if len(unstaged) > 0 {
-		result = append(result, " ")
-		result = append(result, unstaged...)
-	}
-
-	rest := []string{}
-	if repoState.Untracked > 0 {
-		rest = append(rest, fmt.Sprintf("%d", repoState.Untracked), blue("U"))
-	}
-	if len(rest) > 0 {
-		result = append(result, " ")
-		result = append(result, rest...)
-	}
-
-	return result
-}
-
-func Status(repository *git.Repository) RepoState {
-	repoState := RepoState{}
-
-	opts := &git.StatusOptions{}
-	opts.Show = git.StatusShowIndexAndWorkdir
-	opts.Flags = git.StatusOptIncludeUntracked
-	statusList, err := repository.StatusList(opts)
-	if err != nil {
-		panic(err)
-	}
-	size, err := statusList.EntryCount()
-	if err != nil {
-		panic(err)
-	}
-
-	for i := 0; i < size; i++ {
-		status, err := statusList.ByIndex(i)
+		status, err := worktree.Status()
 		if err != nil {
 			panic(err)
 		}
-		if status.Status&git.StatusIndexModified > 0 {
-			repoState.ModificationsStaged++
+		staged := make(map[git.StatusCode]int)
+		unstaged := make(map[git.StatusCode]int)
+		for _, fileStatus := range status {
+			if fileStatus.Staging != ' ' {
+				staged[fileStatus.Staging]++
+			}
+			if fileStatus.Worktree != ' ' {
+				unstaged[fileStatus.Worktree]++
+			}
 		}
-		if status.Status&git.StatusWtModified > 0 {
-			repoState.Modifications++
-		}
-		if status.Status&git.StatusIndexNew > 0 {
-			repoState.NewFiles++
-		}
-		if status.Status&git.StatusWtNew > 0 {
-			repoState.Untracked++
-		}
-		if status.Status&git.StatusIndexRenamed > 0 {
-			repoState.RenamesStaged++
-		}
-		if status.Status&git.StatusWtRenamed > 0 {
-			repoState.Renames++
-		}
-		if status.Status&git.StatusIndexDeleted > 0 {
-			repoState.DeletionsStaged++
-		}
-		if status.Status&git.StatusWtDeleted > 0 {
-			repoState.Deletions++
-		}
-		if status.Status&git.StatusConflicted > 0 {
-			if status.HeadToIndex.Status > 0 && status.IndexToWorkdir.Status > 0 {
-				repoState.ConflictsBoth++
-			} else if status.HeadToIndex.Status > 0 {
-				repoState.ConflictsTheir++
-			} else if status.IndexToWorkdir.Status > 0 {
-				repoState.ConflictsOur++
+
+		for _, spec := range []struct {
+			colorize func(string) string
+			changes  map[git.StatusCode]int
+		}{
+			{
+				colorize: green,
+				changes:  staged,
+			},
+			{
+				colorize: red,
+				changes:  unstaged,
+			},
+		} {
+			if len(spec.changes) > 0 {
+				result = append(result, " ")
+			}
+			for _, mod := range []git.StatusCode{
+				git.Untracked,
+				git.Modified,
+				git.Added,
+				git.Deleted,
+				git.Renamed,
+				git.Copied,
+				git.UpdatedButUnmerged,
+			} {
+				if spec.changes[mod] > 0 {
+					result = append(
+						result,
+						strconv.Itoa(spec.changes[mod]),
+						spec.colorize(string(mod)),
+					)
+				}
 			}
 		}
 	}
-
-	return repoState
+	result = append(result, black(")"))
+	return strings.Join(result, ""), nil
 }
 
 func main() {
 	var repository *git.Repository
+	wd, err := os.Getwd()
+	if err != nil {
+		os.Exit(0)
+	}
 	for {
-		wd, err := os.Getwd()
 		if wd == "/" {
 			os.Exit(0)
 		}
-		repository, err = git.OpenRepository(wd)
+		repository, err = git.PlainOpen(wd)
 		if err != nil {
-			if git.IsErrorCode(err, git.ErrNotFound) {
-				err = os.Chdir(path.Join(wd, ".."))
-				if err != nil {
-					panic(err)
-				}
+			if err == git.ErrRepositoryNotExists {
+				wd = path.Join(wd, "..")
 			} else {
 				panic(err)
 			}
@@ -266,13 +200,9 @@ func main() {
 			break
 		}
 	}
-	branchName, err := Branch(repository)
-
-	result := append([]string{black("git:(")}, branchName...)
-	result = append(result, black(")"))
-	if err == nil {
-		state := Status(repository)
-		result = append(result, state.Format()...)
+	prompt, err := Prompt(repository)
+	if err != nil {
+		panic(err)
 	}
-	fmt.Print(" " + strings.Join(result, ""))
+	fmt.Print(" " + prompt)
 }
