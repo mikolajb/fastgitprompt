@@ -3,13 +3,15 @@
 
 [[projects]]
   branch = "v27"
+  digest = "1:bd527cfbf2233957f9196d6b00ceebd9893614aaa045e854d858d4bd1c672463"
   name = "gopkg.in/libgit2/git2go.v27"
   packages = ["."]
+  pruneopts = ""
   revision = "b479bd14632fd5759d1335387548ce6e66a50f10"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "13ebccd52de4cb97e609f51a2774c8deb8c4accef3ce187dc72fbe6312cc5a0c"
+  input-imports = ["gopkg.in/libgit2/git2go.v27"]
   solver-name = "gps-cdcl"
   solver-version = 1

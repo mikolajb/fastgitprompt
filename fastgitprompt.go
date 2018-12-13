@@ -5,9 +5,12 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	git "gopkg.in/libgit2/git2go.v27"
 )
+
+var master = []string{"Ⓜ", "ⓜ", "🅼", "ꬺ"}
 
 func red(s string) string {
 	return "%F{red}" + s + "%f"
@@ -59,6 +62,11 @@ func Branch(repository *git.Repository) ([]string, error) {
 	if err != nil {
 		panic(err)
 	}
+
+	if branchNameString == "master" {
+		branchNameString = master[time.Now().Second()%len(master)]
+	}
+
 	branchName := []string{branchNameString}
 
 	masterBranch, err := repository.LookupBranch("master", git.BranchLocal)
@@ -88,9 +96,7 @@ func Branch(repository *git.Repository) ([]string, error) {
 	upstream, err := head.Branch().Upstream()
 	if err != nil {
 		if git.IsErrorCode(err, git.ErrNotFound) {
-			branchName = append([]string{" "}, branchName...)
-			branchName = append([]string{red("⚡")}, branchName...)
-			branchName = append([]string{"upstream "}, branchName...)
+			branchName = append([]string{red("⚡"), " "}, branchName...)
 		} else {
 			panic(err)
 		}
@@ -249,8 +255,12 @@ func main() {
 	var repository *git.Repository
 	for {
 		wd, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
 		if wd == "/" {
-			os.Exit(0)
+			fmt.Print(moon())
+			return
 		}
 		repository, err = git.OpenRepository(wd)
 		if err != nil {
@@ -266,13 +276,11 @@ func main() {
 			break
 		}
 	}
-	branchName, err := Branch(repository)
 
-	result := append([]string{black("git:(")}, branchName...)
-	result = append(result, black(")"))
+	result, err := Branch(repository)
 	if err == nil {
 		state := Status(repository)
 		result = append(result, state.Format()...)
 	}
-	fmt.Print(" " + strings.Join(result, ""))
+	fmt.Print(strings.Join(result, ""), " ", moon())
 }
